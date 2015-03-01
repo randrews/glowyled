@@ -7,12 +7,14 @@
 #include "light_ws2812.h"
 
 #define abs(x) ((x) > 0 ? (x) : (-x))
+#define SET_SEQUENCE 1
 
 struct cRGB ledState[1] = { {0, 0, 0} };
 unsigned char shouldSend = 0; // Should we update the LED in the next loop?
+unsigned char shouldRestart = 0; // Should we restart the sequence in the next loop?
 
-unsigned char sequence[] = {1,3,2,6,4,5}; // Sequence of shifts. Each one is a bitfield for rgb, r=1,g=2,b=4.
-unsigned char sequenceLength = 6;
+unsigned char sequence[8] = {7, 0, 0, 0, 0, 0, 0, 0}; // Sequence of shifts. Each one is a bitfield for rgb, r=1,g=2,b=4.
+unsigned char sequenceLength = 8;
 unsigned char current; // Which element of the sequence we're working *toward*
 unsigned char dR, dG, dB; // Deltas to add to R, G, B this shift
 unsigned char currentCycles; // Number of times we've updated in this shift
@@ -20,14 +22,19 @@ unsigned char currentCycles; // Number of times we've updated in this shift
 void setDeltas(unsigned char start, unsigned char stop);
 
 void startSequence(){
-    currentCycles = 0;
-    current = 1; // We start at state 0, working toward 1
+    shouldRestart = 0;
 
+    // Set the initial state
     ledState[0].r = (sequence[0] & 1 ? 0xff : 0);
     ledState[0].g = (sequence[0] & 2 ? 0xff : 0);
     ledState[0].b = (sequence[0] & 4 ? 0xff : 0);
 
-    setDeltas(sequence[0], sequence[1]);
+    if(sequenceLength > 1){
+        currentCycles = 0;
+        current = 1; // We start at state 0, working toward 1
+
+        setDeltas(sequence[0], sequence[1]);
+    }
 }
 
 void setDeltas(unsigned char start, unsigned char stop){
@@ -45,6 +52,11 @@ void setDeltas(unsigned char start, unsigned char stop){
 }
 
 void step(){
+    if(sequenceLength == 1){
+        ws2812_setleds(ledState, 1);
+        return;
+    }
+
     if(currentCycles == 0xff) {
         // Time to shift to the next state
         unsigned char start = sequence[current];
@@ -62,10 +74,18 @@ void step(){
 }
 
 USB_PUBLIC uchar usbFunctionSetup(uchar data[8]) {
-    return 0;
+    usbRequest_t *rq = (void *)data; // cast data to correct type
+
+    // We only handle one command type right now
+    if(rq->bRequest == SET_SEQUENCE) return USB_NO_MSG;
+    else return 0;
 }
 
 USB_PUBLIC uchar usbFunctionWrite(uchar *data, uchar len) {
+    if(len > 8) len = 8;
+    for(char n=0; n<len; n++) sequence[n] = data[n];
+    sequenceLength = len;
+    shouldRestart = 1;
     return 1;
 }
 
@@ -113,9 +133,11 @@ void setupTimer(){
 }
 
 int main() {
-    ws2812_setleds(ledState, 1);
+    sequence[0] = 7; // Start with a white LED
+    startSequence();
+    setupTimer();
 
-    /* wdt_enable(WDTO_1S); // enable 1s watchdog timer */
+    wdt_enable(WDTO_1S); // enable 1s watchdog timer
 
     usbInit();
 	
@@ -126,13 +148,12 @@ int main() {
     }
     usbDeviceConnect();
 
-    setupTimer();
-    startSequence();
     sei(); // Enable interrupts after re-enumeration
 
     while(1) {
         wdt_reset(); // keep the watchdog happy
         usbPoll();
+        if(shouldRestart) startSequence();
         if(shouldSend){
             shouldSend = 0;
             step();

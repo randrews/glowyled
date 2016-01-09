@@ -1,6 +1,6 @@
 # WinAVR cross-compiler toolchain is used here
 CHIP=attiny85
-MHZ=16500000
+MHZ=16000000
 APP=led
 
 ##########
@@ -21,6 +21,9 @@ all: ${APP}.hex
 # With this, you can flash the firmware by just typing "make flash" on command-line
 flash: ${APP}.hex
 	avrdude $(DUDEFLAGS) -U flash:w:$<
+
+fuses:
+	avrdude $(DUDEFLAGS) -U lfuse:w:0xe2:m -U hfuse:w:0xdf:m -U efuse:w:0xff:m -B8
 
 # Housekeeping if you want it
 clean:
